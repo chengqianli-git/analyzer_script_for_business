@@ -479,7 +479,7 @@ process_log_file() {
         ignore_patterns_str="${ignore_patterns_str}${clean_pattern}"
     done
     
-    # 处理日志的核心AWK脚本
+    # 处理日志的核心AWK脚本 - 直接处理原始日志文件
     awk -v temp_read="$TEMP_READ_OPS" \
         -v temp_write="$TEMP_WRITE_OPS" \
         -v temp_metadata="$TEMP_METADATA_OPS" \
@@ -666,12 +666,15 @@ process_log_file() {
             }
             
             # SQL模式归一化和记录（同时记录操作类型）
-            # 移除pattern_count限制，确保每种操作类型都能被记录
-            normalized = normalize_sql(stmt)
-            if (normalized != "") {
-                # 记录格式：操作类型|归一化后的SQL
-                # 使用op_type而不是op_category，确保与分类逻辑一致
-                print op_type "|" normalized > temp_patterns
+            # 根据PATTERN_LIMIT控制记录数量，降低CPU消耗
+            if (pattern_limit == 0 || pattern_count < pattern_limit) {
+                normalized = normalize_sql(stmt)
+                if (normalized != "") {
+                    # 记录格式：操作类型|归一化后的SQL
+                    # 使用op_type而不是op_category，确保与分类逻辑一致
+                    print op_type "|" normalized > temp_patterns
+                    pattern_count++
+                }
             }
             valid_count++
         }
@@ -714,10 +717,10 @@ process_log_file() {
             # 替换字符串值（双引号）
             gsub(/"[^"]*"/, "\"STRING\"", stmt)
             
-            # 替换字段=数字的模式（如 V2=5157, K1=123 等）
-            # 匹配字段名=数字后面跟空格或行尾的情况
-            gsub(/[A-Za-z_][A-Za-z0-9_]*=[0-9]+[[:space:]]/, "FIELD=NUMBER ", stmt)
-            gsub(/[A-Za-z_][A-Za-z0-9_]*=[0-9]+$/, "FIELD=NUMBER", stmt)
+            # 替换字段=数字的模式（如 TENANT_ID = 15934, USER_ID=12345 等）
+            # 匹配字段名=数字，等号前后可能有空格的情况
+            gsub(/[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]/, "FIELD=NUMBER ", stmt)
+            gsub(/[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*[0-9]+$/, "FIELD=NUMBER", stmt)
             
             # 替换数字值（使用单词边界，避免替换表名中的数字）
             gsub(/\b[0-9]+\b/, "NUMBER", stmt)
@@ -731,17 +734,22 @@ process_log_file() {
             # 替换日期格式
             gsub(/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/, "DATE", stmt)
             
+            # 替换PARTITION子句 - 处理分区信息
+            # 处理 PARTITION(P15971_20250801000000,P15971_20250701000000) 和 PARTITION(P16854)
+            gsub(/PARTITION *\([^)]*\)/, "PARTITION (PARTITIONS)", stmt)
+            
             # 转换为大写
-            return toupper(stmt)
+            # return toupper(stmt)
+            return stmt
         }
         
         END {
             print "处理完成！总行数: " line_count ", 有效记录: " valid_count ", 无法解析: " unparsed_count > "/dev/stderr"
         }
-        ' "$TEMP_FILTERED_LOG"
+        ' "$log_file"
     
     # 记录处理完成后的内存使用
-    local final_memory=$(record_memory "处理完成" "$(wc -l < "$TEMP_FILTERED_LOG")" "$(cat "$TEMP_READ_OPS" "$TEMP_WRITE_OPS" "$TEMP_METADATA_OPS" "$TEMP_SCHEMA_OPS" "$TEMP_OTHER_OPS" 2>/dev/null | wc -l || echo 0)")
+    local final_memory=$(record_memory "处理完成" "$(wc -l < "$log_file")" "$(cat "$TEMP_READ_OPS" "$TEMP_WRITE_OPS" "$TEMP_METADATA_OPS" "$TEMP_SCHEMA_OPS" "$TEMP_OTHER_OPS" 2>/dev/null | wc -l || echo 0)")
     echo "最终内存使用: ${final_memory}MB"
     
     # 显示无法解析的SQL数量
