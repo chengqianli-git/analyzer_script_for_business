@@ -11,7 +11,7 @@ NC='\033[0m'
 # 默认参数
 LOG_FILE=""
 OUTPUT_FILE=""
-PATTERN_LIMIT=0
+PATTERN_LIMIT=50000
 MONITOR_INTERVAL=50000
 IGNORE_PATTERNS=()
 DEBUG=false
@@ -349,16 +349,16 @@ analyze_sql_patterns_by_type() {
     # 创建临时文件来存储分类后的SQL模式
     local temp_read_patterns="${TEMP_DIR}/read_patterns.txt"
     local temp_write_patterns="${TEMP_DIR}/write_patterns.txt"
-    local temp_metadata_patterns="${TEMP_DIR}/metadata_patterns.txt"
+    # local temp_metadata_patterns="${TEMP_DIR}/metadata_patterns.txt"
     local temp_schema_patterns="${TEMP_DIR}/schema_patterns.txt"
-    local temp_other_patterns="${TEMP_DIR}/other_patterns.txt"
+    # local temp_other_patterns="${TEMP_DIR}/other_patterns.txt"
     
     # 清空临时文件
     > "$temp_read_patterns"
     > "$temp_write_patterns"
-    > "$temp_metadata_patterns"
+    # > "$temp_metadata_patterns"
     > "$temp_schema_patterns"
-    > "$temp_other_patterns"
+    # > "$temp_other_patterns"
     
     # 按操作类型分类SQL模式（新格式：操作类型|归一化SQL）
     while IFS='|' read -r op_category normalized_sql; do
@@ -373,14 +373,14 @@ analyze_sql_patterns_by_type() {
             "schema_change")
                 echo "$normalized_sql" >> "$temp_schema_patterns"
                 ;;
-            "metadata")
-                echo "$normalized_sql" >> "$temp_metadata_patterns"
-                ;;
-            "other")
-                echo "$normalized_sql" >> "$temp_other_patterns"
-                ;;
+            # "metadata")
+            #     echo "$normalized_sql" >> "$temp_metadata_patterns"
+            #     ;;
+            # "other")
+            #     echo "$normalized_sql" >> "$temp_other_patterns"
+            #     ;;
             *)
-                echo "$normalized_sql" >> "$temp_other_patterns"
+                # echo "$normalized_sql" >> "$temp_other_patterns"
                 ;;
         esac
     done < "$TEMP_SQL_PATTERNS"
@@ -409,21 +409,21 @@ analyze_sql_patterns_by_type() {
         done
     fi
 
-    # 显示元数据查询SQL模式
-    local metadata_count=$(wc -l < "$temp_metadata_patterns" 2>/dev/null || echo 0)
-    if [[ $metadata_count -gt 0 ]]; then
-        echo -e "\n${BLUE}元数据查询SQL模式（前10个）:${NC}"
-        echo "----------------------------------------"
-        # 使用临时变量避免管道中的while循环问题
-        local temp_sorted=$(sort "$temp_metadata_patterns" | uniq -c | sort -nr | head -10)
-        echo "$temp_sorted" | while read count pattern; do
-            echo "  出现 $count 次: $pattern"
-        done
-    else
-        echo -e "\n${BLUE}元数据查询SQL模式:${NC}"
-        echo "----------------------------------------"
-        echo "  无元数据查询SQL模式记录"
-    fi
+    # # 显示元数据查询SQL模式
+    # local metadata_count=$(wc -l < "$temp_metadata_patterns" 2>/dev/null || echo 0)
+    # if [[ $metadata_count -gt 0 ]]; then
+    #     echo -e "\n${BLUE}元数据查询SQL模式（前10个）:${NC}"
+    #     echo "----------------------------------------"
+    #     # 使用临时变量避免管道中的while循环问题
+    #     local temp_sorted=$(sort "$temp_metadata_patterns" | uniq -c | sort -nr | head -10)
+    #     echo "$temp_sorted" | while read count pattern; do
+    #         echo "  出现 $count 次: $pattern"
+    #     done
+    # else
+    #     echo -e "\n${BLUE}元数据查询SQL模式:${NC}"
+    #     echo "----------------------------------------"
+    #     echo "  无元数据查询SQL模式记录"
+    # fi
 
     # 显示schema变更操作SQL模式
     local schema_count=$(wc -l < "$temp_schema_patterns" 2>/dev/null || echo 0)
@@ -441,24 +441,24 @@ analyze_sql_patterns_by_type() {
         echo "  无Schema变更操作SQL模式记录"
     fi
     
-    # 显示其他操作SQL模式
-    local other_count=$(wc -l < "$temp_other_patterns" 2>/dev/null || echo 0)
-    if [[ $other_count -gt 0 ]]; then
-        echo -e "\n${BLUE}其他操作SQL模式（前10个）:${NC}"
-        echo "----------------------------------------"
-        # 使用临时变量避免管道中的while循环问题
-        local temp_sorted=$(sort "$temp_other_patterns" | uniq -c | sort -nr | head -10)
-        echo "$temp_sorted" | while read count pattern; do
-            echo "  出现 $count 次: $pattern"
-        done
-    else
-        echo -e "\n${BLUE}其他操作SQL模式:${NC}"
-        echo "----------------------------------------"
-        echo "  无其他操作SQL模式记录"
-    fi
+    # # 显示其他操作SQL模式
+    # local other_count=$(wc -l < "$temp_other_patterns" 2>/dev/null || echo 0)
+    # if [[ $other_count -gt 0 ]]; then
+    #     echo -e "\n${BLUE}其他操作SQL模式（前10个）:${NC}"
+    #     echo "----------------------------------------"
+    #     # 使用临时变量避免管道中的while循环问题
+    #     local temp_sorted=$(sort "$temp_other_patterns" | uniq -c | sort -nr | head -10)
+    #     echo "$temp_sorted" | while read count pattern; do
+    #         echo "  出现 $count 次: $pattern"
+    #     done
+    # else
+    #     echo -e "\n${BLUE}其他操作SQL模式:${NC}"
+    #     echo "----------------------------------------"
+    #     echo "  无其他操作SQL模式记录"
+    # fi
     
     # 清理临时文件
-    rm -f "$temp_read_patterns" "$temp_write_patterns" "$temp_metadata_patterns" "$temp_other_patterns" "$temp_schema_patterns"
+    rm -f "$temp_read_patterns" "$temp_write_patterns" "$temp_schema_patterns"
 }
 
 # 主要的日志处理函数
@@ -783,10 +783,10 @@ generate_report() {
     
     # 生成各类操作的详细报告
     generate_operation_report "读操作" "$TEMP_READ_OPS" "2"
-    generate_operation_report "元数据查询操作" "$TEMP_METADATA_OPS" "3"
+    # generate_operation_report "元数据查询操作" "$TEMP_METADATA_OPS" "3"
     generate_operation_report "写操作" "$TEMP_WRITE_OPS" "4"
     generate_operation_report "Schema变更操作" "$TEMP_SCHEMA_OPS" "5"
-    generate_operation_report "其他操作" "$TEMP_OTHER_OPS" "6"
+    # generate_operation_report "其他操作" "$TEMP_OTHER_OPS" "6"
     
     # SQL模式分析
     echo -e "\n${GREEN}7. SQL模式分析${NC}"
