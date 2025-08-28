@@ -395,7 +395,6 @@ analyze_sql_patterns_by_type() {
         echo "$temp_sorted" | while read count pattern; do
             echo "  出现 $count 次: $pattern"
         done
-        echo "DEBUG: 读操作SQL模式处理完成" >&2
     fi
     
     # 显示写操作SQL模式
@@ -462,54 +461,12 @@ analyze_sql_patterns_by_type() {
     rm -f "$temp_read_patterns" "$temp_write_patterns" "$temp_metadata_patterns" "$temp_other_patterns" "$temp_schema_patterns"
 }
 
-# 预处理日志文件
-preprocess_log_file() {
-    local log_file="$1"
-    local filtered_file="$2"
-    
-    echo "正在预处理日志文件..."
-    
-    if [[ ${#IGNORE_PATTERNS[@]} -gt 0 ]]; then
-        # 构建grep过滤模式
-        local grep_pattern=""
-        for pattern in "${IGNORE_PATTERNS[@]}"; do
-            if [[ -n "$grep_pattern" ]]; then
-                grep_pattern="${grep_pattern}\\|"
-            fi
-            # 转义特殊字符
-            local escaped_pattern=$(echo "$pattern" | sed 's/[[\.*^$()+?{|]/\\&/g')
-            grep_pattern="${grep_pattern}${escaped_pattern}"
-        done
-        
-        # 过滤掉匹配忽略模式的行 - 只匹配SQL开头的关键字
-        # 构建精确的grep模式，确保关键字在SQL语句的开头
-        local precise_pattern=""
-        for pattern in "${IGNORE_PATTERNS[@]}"; do
-            if [[ -n "$precise_pattern" ]]; then
-                precise_pattern="${precise_pattern}\\|"
-            fi
-            # 转义特殊字符并去掉尾部空格
-            local clean_pattern=$(echo "$pattern" | sed 's/[[\.*^$()+?{|]/\\&/g; s/[[:space:]]*$//')
-            # 匹配: |Stmt=PATTERN 或 |Stmt=[空格/注释]PATTERN
-            precise_pattern="${precise_pattern}|Stmt=${clean_pattern}\\b"
-        done
-        
-        grep -v -E -i "${precise_pattern}" "$log_file" > "$filtered_file" 2>/dev/null || cp "$log_file" "$filtered_file"
-        echo "已过滤 $(($(wc -l < "$log_file") - $(wc -l < "$filtered_file"))) 行"
-    else
-        cp "$log_file" "$filtered_file"
-    fi
-}
-
 # 主要的日志处理函数
 process_log_file() {
     local log_file="$1"
     
     echo "正在处理日志文件..."
     record_memory "开始处理" "0" "0"
-    
-    # 预处理日志文件
-    preprocess_log_file "$log_file" "$TEMP_FILTERED_LOG"
     
     # 构建ignore_patterns字符串传递给AWK作为双重保险
     local ignore_patterns_str=""
@@ -555,27 +512,6 @@ process_log_file() {
                 next
             }
             
-            # 提取时间戳
-            timestamp_pos = index($0, "|Timestamp=")
-            if (timestamp_pos == 0) next
-            
-            timestamp_part = substr($0, timestamp_pos + 11)
-            pipe_pos = index(timestamp_part, "|")
-            if (pipe_pos == 0) next
-            
-            timestamp = substr(timestamp_part, 1, pipe_pos - 1)
-            
-            # 提取执行时间
-            execution_time = "0"
-            time_pos = index($0, "|Time=")
-            if (time_pos > 0) {
-                time_part = substr($0, time_pos + 6)
-                pipe_pos = index(time_part, "|")
-                if (pipe_pos > 0) {
-                    execution_time = substr(time_part, 1, pipe_pos - 1)
-                }
-            }
-            
             # 智能提取SQL语句
             stmt_pos = index($0, "|Stmt=")
             if (stmt_pos == 0) next
@@ -604,6 +540,27 @@ process_log_file() {
                 next
             }
             
+            # 提取时间戳
+            timestamp_pos = index($0, "|Timestamp=")
+            if (timestamp_pos == 0) next
+            
+            timestamp_part = substr($0, timestamp_pos + 11)
+            pipe_pos = index(timestamp_part, "|")
+            if (pipe_pos == 0) next
+            
+            timestamp = substr(timestamp_part, 1, pipe_pos - 1)
+            
+            # 提取执行时间
+            execution_time = "0"
+            time_pos = index($0, "|Time=")
+            if (time_pos > 0) {
+                time_part = substr($0, time_pos + 6)
+                pipe_pos = index(time_part, "|")
+                if (pipe_pos > 0) {
+                    execution_time = substr(time_part, 1, pipe_pos - 1)
+                }
+            }
+
             # 转换时间戳
             if (length(timestamp) == 13) {
                 second_timestamp = int(timestamp / 1000)
@@ -716,7 +673,6 @@ process_log_file() {
                 # 使用op_type而不是op_category，确保与分类逻辑一致
                 print op_type "|" normalized > temp_patterns
             }
-            
             valid_count++
         }
         
@@ -800,13 +756,7 @@ process_log_file() {
 
 # 生成详细报告
 generate_report() {
-    echo -e "\n${GREEN}================================================================"
-    echo "高效准确的审计日志分析报告"
-    echo "================================================================"
-    
-    echo -e "\n1. 总体统计${NC}"
-    echo "----------------------------------------"
-    
+    echo -e "\n1. 总体统计"
     local total_read=$(wc -l < "$TEMP_READ_OPS" 2>/dev/null || echo "0")
     local total_write=$(wc -l < "$TEMP_WRITE_OPS" 2>/dev/null || echo "0")
     local total_metadata=$(wc -l < "$TEMP_METADATA_OPS" 2>/dev/null || echo "0")
