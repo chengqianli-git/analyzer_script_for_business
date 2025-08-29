@@ -230,6 +230,10 @@ class EfficientAuditAnalyzer:
         pattern = re.sub(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', 'TIMESTAMP', pattern)
         # 替换日期
         pattern = re.sub(r'\d{4}-\d{2}-\d{2}', 'DATE', pattern)
+
+        if pattern.startswith("select NUMBER"):
+            print(pattern)
+            print(stmt)
         
         return pattern[0:6000]
     
