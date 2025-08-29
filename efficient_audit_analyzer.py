@@ -231,7 +231,7 @@ class EfficientAuditAnalyzer:
         # 替换日期
         pattern = re.sub(r'\d{4}-\d{2}-\d{2}', 'DATE', pattern)
         
-        return pattern
+        return pattern[0:6000]
     
     def parse_log_line(self, line: str) -> Dict[str, Any]:
         """解析单行日志，支持JSON格式和传统格式"""
@@ -416,7 +416,7 @@ class EfficientAuditAnalyzer:
         
         # 提取SQL模式（限制内存使用）
         if self.operation_stats['total_ops'] <= self.pattern_limit:  # 只分析前N条的模式
-            pattern = self.extract_sql_pattern(stmt)
+            pattern = self.extract_sql_pattern(stmt[:6000])
             self.sql_patterns[pattern] += 1
     
     def calculate_concurrency_stats(self, ops_by_second: Dict) -> Dict[str, Any]:
