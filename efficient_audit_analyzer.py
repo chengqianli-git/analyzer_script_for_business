@@ -839,9 +839,297 @@ class EfficientAuditAnalyzer:
         self.memory_monitor.save_memory_log(processing_log_file)
 
 
+class MultiLogAnalyzer:
+    """多日志文件分析器"""
+    
+    def __init__(self, log_files: List[str], pattern_limit: int = 100000, ignore_patterns: List[str] = None):
+        self.log_files = log_files
+        self.pattern_limit = pattern_limit
+        self.ignore_patterns = ignore_patterns or []
+        
+        # 合并后的统计结果
+        self.combined_read_ops_by_second = defaultdict(lambda: defaultdict(int))
+        self.combined_metadata_ops_by_second = defaultdict(lambda: defaultdict(int))
+        self.combined_write_ops_by_second = defaultdict(lambda: defaultdict(int))
+        self.combined_schema_change_ops_by_second = defaultdict(lambda: defaultdict(int))
+        self.combined_other_ops_by_second = defaultdict(lambda: defaultdict(int))
+        self.combined_sql_patterns = Counter()
+        self.combined_operation_stats = {
+            'read_ops': 0,
+            'write_ops': 0,
+            'metadata_ops': 0,
+            'schema_change_ops': 0,
+            'other_ops': 0,
+            'total_ops': 0
+        }
+        
+        # 每个文件的统计信息
+        self.file_stats = {}
+        
+        # 合并的内存监控器
+        self.combined_memory_monitor = MemoryMonitor()
+    
+    def analyze_all_files(self):
+        """分析所有日志文件"""
+        print(f"开始分析 {len(self.log_files)} 个日志文件...")
+        
+        total_start_time = time.time()
+        
+        for i, log_file in enumerate(self.log_files, 1):
+            print(f"\n{'='*60}")
+            print(f"正在分析第 {i}/{len(self.log_files)} 个文件: {log_file}")
+            print(f"{'='*60}")
+            
+            try:
+                # 创建单个文件分析器
+                analyzer = EfficientAuditAnalyzer(log_file, self.pattern_limit, self.ignore_patterns)
+                
+                # 分析单个文件
+                analyzer.process_log_file_generator()
+                
+                # 合并统计结果
+                self.merge_analysis_results(analyzer, log_file)
+                
+                print(f"文件 {log_file} 分析完成")
+                
+            except Exception as e:
+                print(f"分析文件 {log_file} 时出现错误: {e}")
+                continue
+        
+        total_time = time.time() - total_start_time
+        print(f"\n{'='*60}")
+        print(f"所有文件分析完成！总用时: {total_time:.2f} 秒")
+        print(f"{'='*60}")
+    
+    def merge_analysis_results(self, analyzer: EfficientAuditAnalyzer, log_file: str):
+        """合并单个文件的分析结果到总结果中"""
+        # 记录文件统计信息
+        self.file_stats[log_file] = {
+            'operation_stats': analyzer.operation_stats.copy(),
+            'memory_summary': analyzer.memory_monitor.get_memory_summary()
+        }
+        
+        # 合并操作统计
+        for key in self.combined_operation_stats:
+            self.combined_operation_stats[key] += analyzer.operation_stats[key]
+        
+        # 合并每秒操作统计
+        for second, ops in analyzer.read_ops_by_second.items():
+            for op_type, count in ops.items():
+                self.combined_read_ops_by_second[second][op_type] += count
+        
+        for second, ops in analyzer.metadata_ops_by_second.items():
+            for op_type, count in ops.items():
+                self.combined_metadata_ops_by_second[second][op_type] += count
+        
+        for second, ops in analyzer.write_ops_by_second.items():
+            for op_type, count in ops.items():
+                self.combined_write_ops_by_second[second][op_type] += count
+        
+        for second, ops in analyzer.schema_change_ops_by_second.items():
+            for op_type, count in ops.items():
+                self.combined_schema_change_ops_by_second[second][op_type] += count
+        
+        for second, ops in analyzer.other_ops_by_second.items():
+            for op_type, count in ops.items():
+                self.combined_other_ops_by_second[second][op_type] += count
+        
+        # 合并SQL模式统计
+        self.combined_sql_patterns.update(analyzer.sql_patterns)
+    
+    def generate_combined_report(self):
+        """生成合并后的分析报告"""
+        print("\n" + "="*80)
+        print("多文件审计日志分析报告")
+        print("="*80)
+        
+        # 1. 文件概览
+        print(f"\n1. 文件概览")
+        print("-" * 40)
+        print(f"分析的文件数量: {len(self.log_files)}")
+        for i, log_file in enumerate(self.log_files, 1):
+            stats = self.file_stats.get(log_file, {})
+            op_stats = stats.get('operation_stats', {})
+            print(f"  文件 {i}: {log_file}")
+            print(f"    总操作数: {op_stats.get('total_ops', 0):,}")
+            print(f"    读操作: {op_stats.get('read_ops', 0):,}")
+            print(f"    写操作: {op_stats.get('write_ops', 0):,}")
+            print(f"    元数据查询: {op_stats.get('metadata_ops', 0):,}")
+            print(f"    Schema变更: {op_stats.get('schema_change_ops', 0):,}")
+            print(f"    其他操作: {op_stats.get('other_ops', 0):,}")
+        
+        # 2. 总体统计
+        print(f"\n2. 总体统计（所有文件合并）")
+        print("-" * 40)
+        total_ops = self.combined_operation_stats['total_ops']
+        if total_ops > 0:
+            print(f"总操作数: {total_ops:,}")
+            print(f"读操作: {self.combined_operation_stats['read_ops']:,} ({self.combined_operation_stats['read_ops']/total_ops*100:.1f}%)")
+            print(f"元数据查询操作: {self.combined_operation_stats['metadata_ops']:,} ({self.combined_operation_stats['metadata_ops']/total_ops*100:.1f}%)")
+            print(f"写操作: {self.combined_operation_stats['write_ops']:,} ({self.combined_operation_stats['write_ops']/total_ops*100:.1f}%)")
+            print(f"Schema变更操作: {self.combined_operation_stats['schema_change_ops']:,} ({self.combined_operation_stats['schema_change_ops']/total_ops*100:.1f}%)")
+            print(f"其他操作: {self.combined_operation_stats['other_ops']:,} ({self.combined_operation_stats['other_ops']/total_ops*100:.1f}%)")
+        
+        # 3. 读请求分析
+        print(f"\n3. 读请求分析（合并后）")
+        print("-" * 40)
+        
+        # 统计读操作类型
+        read_type_stats = defaultdict(int)
+        for second_ops in self.combined_read_ops_by_second.values():
+            for op_type, count in second_ops.items():
+                read_type_stats[op_type] += count
+        
+        print("读操作类型统计:")
+        for op_type, count in sorted(read_type_stats.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {op_type}: {count:,} 次")
+        
+        # 读操作并发度
+        read_concurrency = self.calculate_concurrency_stats(self.combined_read_ops_by_second)
+        print(f"\n读操作总体并发度:")
+        print(f"  最大并发度: {read_concurrency['overall']['max_concurrency']} 次/秒")
+        print(f"  平均并发度: {read_concurrency['overall']['avg_concurrency']:.2f} 次/秒")
+        print(f"  总时间跨度: {read_concurrency['overall']['total_seconds']} 秒")
+        
+        # 4. 写请求分析
+        print(f"\n4. 写请求分析（合并后）")
+        print("-" * 40)
+        
+        # 统计写操作类型
+        write_type_stats = defaultdict(int)
+        for second_ops in self.combined_write_ops_by_second.values():
+            for op_type, count in second_ops.items():
+                write_type_stats[op_type] += count
+        
+        print("写操作类型统计:")
+        for op_type, count in sorted(write_type_stats.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {op_type}: {count:,} 次")
+        
+        # 写操作并发度
+        write_concurrency = self.calculate_concurrency_stats(self.combined_write_ops_by_second)
+        print(f"\n写操作总体并发度:")
+        print(f"  最大并发度: {write_concurrency['overall']['max_concurrency']} 次/秒")
+        print(f"  平均并发度: {write_concurrency['overall']['avg_concurrency']:.2f} 次/秒")
+        print(f"  总时间跨度: {write_concurrency['overall']['total_seconds']} 秒")
+        
+        # 5. SQL模式分析（合并后）
+        print(f"\n5. SQL模式分析（合并后）")
+        print("-" * 40)
+        
+        # 分析合并后的SQL模式
+        pattern_by_type = defaultdict(list)
+        
+        for pattern, count in self.combined_sql_patterns.items():
+            if count < 2:  # 只关注出现2次以上的模式
+                continue
+            
+            # 确定模式类型
+            pattern_upper = pattern.upper()
+            if pattern_upper.startswith('INSERT'):
+                pattern_type = 'INSERT'
+            elif pattern_upper.startswith('UPDATE'):
+                pattern_type = 'UPDATE'
+            elif pattern_upper.startswith('DELETE'):
+                pattern_type = 'DELETE'
+            elif pattern_upper.startswith('SELECT'):
+                pattern_type = 'SELECT'
+            elif pattern_upper.startswith('WITH'):
+                pattern_type = 'SELECT'
+            elif pattern_upper.startswith('SHOW'):
+                pattern_type = 'SHOW'
+            elif pattern_upper.startswith('ALTER'):
+                pattern_type = 'ALTER'
+            elif pattern_upper.startswith('CREATE'):
+                pattern_type = 'CREATE'
+            elif pattern_upper.startswith('DROP'):
+                pattern_type = 'DROP'
+            else:
+                pattern_type = 'OTHER'
+            
+            pattern_by_type[pattern_type].append((pattern, count))
+        
+        # 对每种类型取前10个最常见的模式
+        for pattern_type, patterns in pattern_by_type.items():
+            if patterns:
+                sorted_patterns = sorted(patterns, key=lambda x: x[1], reverse=True)[:10]
+                print(f"\n{pattern_type} 操作常见模式:")
+                for i, (pattern, count) in enumerate(sorted_patterns, 1):
+                    print(f"  {i}. 出现 {count} 次:")
+                    print(f"     {pattern}")
+    
+    def calculate_concurrency_stats(self, ops_by_second: Dict) -> Dict[str, Any]:
+        """计算并发度统计（复用EfficientAuditAnalyzer的方法）"""
+        if not ops_by_second:
+            return {
+                'overall': {'max_concurrency': 0, 'avg_concurrency': 0, 'total_seconds': 0},
+                'by_type': {}
+            }
+        
+        # 计算每秒总操作数
+        second_totals = {}
+        for second, ops in ops_by_second.items():
+            second_totals[second] = sum(ops.values())
+        
+        # 总体并发度统计
+        max_concurrency = max(second_totals.values()) if second_totals else 0
+        avg_concurrency = sum(second_totals.values()) / len(second_totals) if second_totals else 0
+        
+        overall_stats = {
+            'max_concurrency': max_concurrency,
+            'avg_concurrency': avg_concurrency,
+            'total_seconds': len(second_totals)
+        }
+        
+        return {
+            'overall': overall_stats,
+            'by_type': {}
+        }
+    
+    def save_combined_analysis(self, output_file: str):
+        """保存合并后的详细分析结果"""
+        print(f"\n正在保存合并分析结果到 {output_file}...")
+        
+        analysis_result = {
+            'file_info': {
+                'total_files': len(self.log_files),
+                'files': self.log_files,
+                'file_stats': self.file_stats
+            },
+            'combined_summary': {
+                'total_operations': self.combined_operation_stats['total_ops'],
+                'read_operations': self.combined_operation_stats['read_ops'],
+                'metadata_operations': self.combined_operation_stats['metadata_ops'],
+                'write_operations': self.combined_operation_stats['write_ops'],
+                'schema_change_operations': self.combined_operation_stats['schema_change_ops'],
+                'other_operations': self.combined_operation_stats['other_ops']
+            },
+            'combined_read_operations': {
+                'concurrency': self.calculate_concurrency_stats(self.combined_read_ops_by_second)
+            },
+            'combined_write_operations': {
+                'concurrency': self.calculate_concurrency_stats(self.combined_write_ops_by_second)
+            },
+            'combined_metadata_operations': {
+                'concurrency': self.calculate_concurrency_stats(self.combined_metadata_ops_by_second)
+            },
+            'combined_schema_change_operations': {
+                'concurrency': self.calculate_concurrency_stats(self.combined_schema_change_ops_by_second)
+            },
+            'combined_other_operations': {
+                'concurrency': self.calculate_concurrency_stats(self.combined_other_ops_by_second)
+            },
+            'combined_sql_patterns': dict(self.combined_sql_patterns)
+        }
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(analysis_result, f, ensure_ascii=False, indent=2, default=str)
+        
+        print(f"合并分析结果已保存到 {output_file}")
+
+
 def main():
     parser = argparse.ArgumentParser(description='审计日志分析工具')
-    parser.add_argument('log_file', help='审计日志文件路径')
+    parser.add_argument('log_files', nargs='+', help='审计日志文件路径（支持多个文件）')
     parser.add_argument('--output', '-o', help='输出详细分析结果的文件路径')
     parser.add_argument('--pattern-limit', '-p', type=int, default=0, 
                        help='SQL模式分析的限制条数（默认50000）')
@@ -855,40 +1143,53 @@ def main():
     try:
         # 如果设置为0，则分析所有sql记录的模式
         pattern_limit = args.pattern_limit if args.pattern_limit > 0 else float('inf')
-        analyzer = EfficientAuditAnalyzer(args.log_file, pattern_limit, args.ignore)
-        
-        # 设置内存监控间隔
-        if hasattr(analyzer.memory_monitor, 'monitor_interval'):
-            analyzer.memory_monitor.monitor_interval = args.monitor_interval
         
         start_time = time.time()
-        print(f"开始分析日志文件: {args.log_file}")
-        print(f"SQL模式分析限制: {pattern_limit if pattern_limit != float('inf') else '无限制'}")
-        print(f"处理监控间隔: 每处理{args.monitor_interval}行记录一次进度")
-        if args.ignore:
-            print(f"忽略的SQL模式: {', '.join(args.ignore)}")
         
-        analyzer.process_log_file_generator()
-        
-        analyzer.generate_report()
-        
-        if args.output:
-            analyzer.save_detailed_analysis(args.output)
+        if len(args.log_files) == 1:
+            # 单个文件分析
+            print(f"开始分析单个日志文件: {args.log_files[0]}")
+            print(f"SQL模式分析限制: {pattern_limit if pattern_limit != float('inf') else '无限制'}")
+            print(f"处理监控间隔: 每处理{args.monitor_interval}行记录一次进度")
+            if args.ignore:
+                print(f"忽略的SQL模式: {', '.join(args.ignore)}")
+            
+            analyzer = EfficientAuditAnalyzer(args.log_files[0], pattern_limit, args.ignore)
+            
+            # 设置内存监控间隔
+            if hasattr(analyzer.memory_monitor, 'monitor_interval'):
+                analyzer.memory_monitor.monitor_interval = args.monitor_interval
+            
+            analyzer.process_log_file_generator()
+            analyzer.generate_report()
+            
+            if args.output:
+                analyzer.save_detailed_analysis(args.output)
+            
+        else:
+            # 多个文件分析
+            print(f"开始分析 {len(args.log_files)} 个日志文件")
+            print(f"SQL模式分析限制: {pattern_limit if pattern_limit != float('inf') else '无限制'}")
+            print(f"处理监控间隔: 每处理{args.monitor_interval}行记录一次进度")
+            if args.ignore:
+                print(f"忽略的SQL模式: {', '.join(args.ignore)}")
+            
+            multi_analyzer = MultiLogAnalyzer(args.log_files, pattern_limit, args.ignore)
+            multi_analyzer.analyze_all_files()
+            multi_analyzer.generate_combined_report()
+            
+            if args.output:
+                multi_analyzer.save_combined_analysis(args.output)
         
         total_time = time.time() - start_time
         print(f"\n总运行时间: {total_time:.2f} 秒")
         
-        # 处理总结
-        processing_summary = analyzer.memory_monitor.get_memory_summary()
-        if processing_summary:
-            print(f"处理总结: 总记录数{processing_summary['record_count']}, "
-                  f"总用时{processing_summary['elapsed_time']:.2f}秒")
-            
     except KeyboardInterrupt:
         print("\n分析中断")
         sys.exit(1)
     except Exception as e:
         print(f"分析过程中出现错误: {e}")
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == '__main__':
