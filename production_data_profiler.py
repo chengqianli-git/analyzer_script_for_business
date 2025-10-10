@@ -81,7 +81,7 @@ class ProductionDataProfiler:
             )
             print(f"✓ connect to database: {self.config['database']}")
         except Exception as e:
-            print(f"✗ connect to database failed: {e}")
+            print(f"✗ connect to database failed: {e}, {traceback.format_exc()}")
             raise
     
     def close(self):
@@ -296,7 +296,7 @@ class ProductionDataProfiler:
                 stats['date_range_days'] = date_range
             
             # analyze time distribution pattern (by year and month)
-            dist_where = where_clause if where_clause else "WHERE `{column_name}` IS NOT NULL"
+            dist_where = where_clause if where_clause else f"WHERE `{column_name}` IS NOT NULL"
             if where_clause and 'IS NOT NULL' not in where_clause:
                 dist_where = where_clause.replace("WHERE", f"WHERE `{column_name}` IS NOT NULL AND")
             
@@ -403,7 +403,7 @@ class ProductionDataProfiler:
     
     def analyze_table(self, table_name: str):
         """analyze all features of a single table"""
-        print(f"\nbegin to analyze table: {table_name}")
+        print(f"\n" + "="*220 + " begin to analyze table: " + table_name + " " + "="*20)
         
         # get table row count
         row_count = self.get_table_row_count(table_name)
