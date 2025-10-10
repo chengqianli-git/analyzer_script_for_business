@@ -37,7 +37,7 @@ echo "✓ output directory: $OUTPUT_DIR"
 echo ""
 
 # run data feature analysis
-echo "==========================================" + " " + "step 1/2: run data feature analysis" + " " + "==========================================\n"
+echo "========================================== step 1/2: run data feature analysis ==========================================\n"
 python3 production_data_profiler.py
 
 if [ $? -eq 0 ]; then
@@ -55,7 +55,7 @@ else
 fi
 
 echo ""
-echo "==========================================" + " " + "step 2/2: run data relationship analysis" + " " + "==========================================\n"
+echo "========================================== step 2/2: run data relationship analysis ==========================================\n"
 python3 data_relationship_analyzer.py
 
 if [ $? -eq 0 ]; then

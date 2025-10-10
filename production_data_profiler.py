@@ -403,7 +403,7 @@ class ProductionDataProfiler:
     
     def analyze_table(self, table_name: str):
         """analyze all features of a single table"""
-        print(f"\n" + "="*220 + " begin to analyze table: " + table_name + " " + "="*20)
+        print(f"\n" + "*"*30 + " begin to analyze table: " + table_name + " " + "*"*30)
         
         # get table row count
         row_count = self.get_table_row_count(table_name)

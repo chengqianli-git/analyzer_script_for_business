@@ -398,7 +398,7 @@ class DataRelationshipAnalyzer:
         # 1. basic list statistics
         query = """
         SELECT
-            COUNT(DISTINCT account_list_id) as unique_lists,
+            COUNT(DISTINCT alm.account_list_id) as unique_lists,
             COUNT(DISTINCT account_id) as unique_accounts,
             COUNT(*) as total_memberships, 
             AVG(list_sizes.member_count) as avg_members_per_list,
