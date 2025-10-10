@@ -169,9 +169,16 @@ class ProductionConcurrencyViewer:
             print("没有并发度数据可显示")
             return
         
-        print(f"\n{'='*60}")
-        print(f"{'时间点':<25} {'并发度':<10}")
-        print(f"{'='*60}")
+        print(f"\n{'='*80}")
+        print(f"{'时间点':<25} {'并发度':<10} {'备注'}")
+        print(f"{'='*80}")
+        
+        # 找到最大并发度的时间点
+        concurrency_counts = [data['concurrency_count'] for data in concurrency_data]
+        max_concurrency = max(concurrency_counts)
+        
+        # 找到所有最大并发度的时间点
+        max_concurrency_points = [data for data in concurrency_data if data['concurrency_count'] == max_concurrency]
         
         # 如果数据太多，只显示前N个
         display_data = concurrency_data[:max_display] if len(concurrency_data) > max_display else concurrency_data
@@ -179,19 +186,56 @@ class ProductionConcurrencyViewer:
         for data in display_data:
             timestamp_str = data['timestamp'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             concurrency = data['concurrency_count']
-            print(f"{timestamp_str:<25} {concurrency:<10}")
+            
+            # 标记最大并发度
+            remark = ""
+            if data['concurrency_count'] == max_concurrency:
+                remark = "🔥 最大并发度"
+            
+            print(f"{timestamp_str:<25} {concurrency:<10} {remark}")
         
         if len(concurrency_data) > max_display:
             print(f"... (还有 {len(concurrency_data) - max_display} 个时间点)")
         
-        print(f"{'='*60}")
+        print(f"{'='*80}")
         print(f"总共 {len(concurrency_data)} 个时间点")
         
-        # 简单的统计信息
-        concurrency_counts = [data['concurrency_count'] for data in concurrency_data]
-        print(f"最大并发度: {max(concurrency_counts)}")
-        print(f"最小并发度: {min(concurrency_counts)}")
-        print(f"平均并发度: {sum(concurrency_counts) / len(concurrency_counts):.2f}")
+        # 详细统计信息
+        avg_concurrency = sum(concurrency_counts) / len(concurrency_counts)
+        print(f"\n📊 并发度统计:")
+        print(f"   最大并发度: {max_concurrency}")
+        print(f"   平均并发度: {avg_concurrency:.2f}")
+        
+        # 展示最大并发度的时间点详情
+        print(f"\n🔥 最大并发度时间点详情:")
+        print(f"   最大并发度: {max_concurrency}")
+        print(f"   出现次数: {len(max_concurrency_points)} 次")
+        print(f"   时间点列表:")
+        
+        for i, point in enumerate(max_concurrency_points, 1):
+            timestamp_str = point['timestamp'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            print(f"     {i:2d}. {timestamp_str}")
+        
+        # 高并发时间段分析
+        high_concurrency_threshold = max_concurrency * 0.8  # 80%以上的并发度
+        high_concurrency_points = [data for data in concurrency_data if data['concurrency_count'] >= high_concurrency_threshold]
+        
+        print(f"\n⚡ 高并发时间段分析 (并发度 >= {high_concurrency_threshold:.0f}):")
+        print(f"   高并发操作数: {len(high_concurrency_points)}")
+        print(f"   高并发占比: {len(high_concurrency_points) / len(concurrency_data) * 100:.1f}%")
+        
+        if high_concurrency_points:
+            print(f"   前10个高并发时间点:")
+            for i, point in enumerate(high_concurrency_points[:10], 1):
+                timestamp_str = point['timestamp'].strftime('%H:%M:%S.%f')[:-3]
+                print(f"     {i:2d}. {timestamp_str}: 并发度 {point['concurrency_count']}")
+        
+        return {
+            'max_concurrency': max_concurrency,
+            'avg_concurrency': avg_concurrency,
+            'max_concurrency_points': max_concurrency_points,
+            'high_concurrency_points': high_concurrency_points
+        }
     
     def save_to_csv_optimized(self, concurrency_data, output_file):
         """
@@ -255,11 +299,24 @@ def main():
     concurrency_data = viewer.calculate_concurrency_optimized(operations, args.time_window)
     
     # 显示并发度时间线
-    viewer.display_concurrency_timeline(concurrency_data, args.max_display)
+    stats = viewer.display_concurrency_timeline(concurrency_data, args.max_display)
     
     # 保存到CSV文件
     if args.output:
         viewer.save_to_csv_optimized(concurrency_data, args.output)
+    
+    # 显示关键时间点总结
+    if stats:
+        print(f"\n" + "="*80)
+        print(f"🎯 关键时间点总结")
+        print(f"="*80)
+        print(f"最大并发度: {stats['max_concurrency']} (出现 {len(stats['max_concurrency_points'])} 次)")
+        if stats['max_concurrency_points']:
+            first_max_point = stats['max_concurrency_points'][0]
+            print(f"首次出现时间: {first_max_point['timestamp'].strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        
+        print(f"平均并发度: {stats['avg_concurrency']:.2f}")
+        print(f"高并发时间段: {len(stats['high_concurrency_points'])} 个时间点")
     
     # 清理内存
     del operations
