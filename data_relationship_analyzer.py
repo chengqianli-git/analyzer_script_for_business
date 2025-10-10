@@ -506,7 +506,7 @@ class DataRelationshipAnalyzer:
                 self.results['relationships']['account_list_member']['account_base_coverage'] = {
                     'unique_accounts_in_base': data['unique_accounts_in_base'],
                     'accounts_in_lists': data['unique_accounts_in_lists'],
-                    'accounts_not_in_lists': data['unique_accounts_in_base'] - data['accounts_in_lists'],
+                    'accounts_not_in_lists': data['unique_accounts_in_base'] - data['unique_accounts_in_lists'],
                     'coverage_percentage': round(float(data['account_coverage_percentage']), 2) if data['account_coverage_percentage'] else 0
                 }
     
