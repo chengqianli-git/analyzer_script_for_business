@@ -185,7 +185,7 @@ class ProductionDataProfiler:
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days'),
                     'method': 'sampling + time_range' if 'sample_rate' in optimization_config and 'time_range_days' in optimization_config else 'time_range' if 'time_range_days' in optimization_config else 'sampling'
-                }
+                } # TODO 没必要
             
             return stats
         return {}
@@ -229,7 +229,7 @@ class ProductionDataProfiler:
                 stats['optimization_applied'] = {
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days')
-                }
+                } # TODO 没必要
         
         # if the unique value is less (probably a categorical column), get the distribution
         if stats.get('unique_count', float('inf')) < 100 and stats.get('unique_count', 0) > 0:
@@ -309,7 +309,7 @@ class ProductionDataProfiler:
                 stats['optimization_applied'] = {
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days')
-                }
+                } # TODO 没必要
             
             return stats
         return {}
@@ -343,7 +343,7 @@ class ProductionDataProfiler:
                 stats['optimization_applied'] = {
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days')
-                }
+                } # TODO 没必要
             
             return stats
         return {}
@@ -370,12 +370,14 @@ class ProductionDataProfiler:
             # Boolean column can be treated as a categorical column
             return self.analyze_string_column(table_name, column_name, optimization_config)
         else:
+            where_clause = self._build_where_clause(table_name, optimization_config)
             # other types only get basic statistics
             query = f"""
             SELECT 
                 COUNT(*) as total_count,
                 COUNT(`{column_name}`) as non_null_count
             FROM `{table_name}`
+            {where_clause if where_clause else f"WHERE `{column_name}` IS NOT NULL"}
             """
             result = self.execute_query(query)
             if result:
@@ -406,7 +408,7 @@ class ProductionDataProfiler:
                 is_large_table = True
                 optimization_config = self.large_table_configs[table_name]
                 print(f"  large table detected (>{self.large_table_threshold:,} rows)")
-                print(f"   enabling optimization: {optimization_config.get('sample_rate', 0)*100:.1f}% sampling + {optimization_config.get('time_range_days', 'N/A')} days time range")
+                print(f"  enabling optimization: {optimization_config.get('sample_rate', 0)*100:.1f}% sampling + {optimization_config.get('time_range_days', 'N/A')} days time range")
         
         # get table columns
         columns = self.get_table_columns(table_name)
@@ -458,7 +460,7 @@ class ProductionDataProfiler:
             try:
                 self.analyze_table(table_name)
             except Exception as e:
-                print(f"✗ analyze table {table_name} failed: {e}")
+                print(f"✗ analyze table {table_name} failed: {e}, {traceback.format_exc()}")
                 continue
         
     def save_results(self, output_file: str = 'production_data_profile.json'):
