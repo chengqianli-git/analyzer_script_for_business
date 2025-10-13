@@ -78,21 +78,39 @@ class DataRelationshipAnalyzer:
         
         # 1. basic relationship statistics
         query = """
-        SELECT 
-            COUNT(DISTINCT ab.id) as unique_accounts,
-            COUNT(DISTINCT pn.id) as unique_persons,
-            COUNT(DISTINCT CASE WHEN person_counts.person_count > 0 THEN ab.id END) as unique_accounts_with_persons,
-            AVG(COALESCE(person_counts.person_count, 0)) as avg_persons_per_account,
-            MIN(COALESCE(person_counts.person_count, 0)) as min_persons_per_account,
-            MAX(COALESCE(person_counts.person_count, 0)) as max_persons_per_account,
-            STDDEV(COALESCE(person_counts.person_count, 0)) as std_persons_per_account
-        FROM account_base ab
-        LEFT JOIN (
-            SELECT account_id, COUNT(*) as person_count
-            FROM person_norm
-            GROUP BY account_id
-        ) person_counts ON ab.id = person_counts.account_id
-        LEFT JOIN person_norm pn ON ab.id = pn.account_id
+            WITH AccountPersonCounts AS (
+                SELECT
+                    account_id,
+                    COUNT(*) AS person_count
+                FROM person_norm
+                GROUP BY account_id
+            ),
+            PersonStats AS (
+                SELECT
+                    AVG(person_count) AS avg_persons_per_account,
+                    MIN(person_count) AS min_persons_per_account,
+                    MAX(person_count) AS max_persons_per_account,
+                    STDDEV(person_count) AS std_persons_per_account
+                FROM AccountPersonCounts
+            ),
+            OverallStats AS (
+                SELECT
+                    (SELECT APPROX_COUNT_DISTINCT(id) FROM account_base) AS unique_accounts,
+                    (SELECT APPROX_COUNT_DISTINCT(id) FROM person_norm) AS unique_persons,
+                    APPROX_COUNT_DISTINCT(ab.id) AS unique_accounts_with_persons
+                FROM account_base ab
+                INNER JOIN AccountPersonCounts apc ON ab.id = apc.account_id
+            )
+            SELECT
+                o.unique_accounts,
+                o.unique_persons,
+                o.unique_accounts_with_persons,
+                p.avg_persons_per_account,
+                p.min_persons_per_account,
+                p.max_persons_per_account,
+                p.std_persons_per_account
+            FROM OverallStats o
+            CROSS JOIN PersonStats p;
         """
         result = self.execute_query(query)
         
@@ -115,7 +133,7 @@ class DataRelationshipAnalyzer:
             SELECT 
                 person_count,
                 COUNT(*) as account_count,
-                COUNT(*) * 100.0 / (SELECT COUNT(DISTINCT account_id) FROM person_norm) as percentage
+                COUNT(*) * 100.0 / (SELECT APPROX_COUNT_DISTINCT(account_id) FROM person_norm) as percentage
             FROM (
                 SELECT account_id, COUNT(*) as person_count
                 FROM person_norm
@@ -150,7 +168,7 @@ class DataRelationshipAnalyzer:
                     ELSE '500+'
                 END as person_range,
                 COUNT(*) as account_count,
-                COUNT(*) * 100.0 / (SELECT COUNT(DISTINCT id) FROM account_base) as percentage
+                COUNT(*) * 100.0 / (SELECT APPROX_COUNT_DISTINCT(id) FROM account_base) as percentage
             FROM (
                 SELECT ab.id, COALESCE(COUNT(pn.id), 0) as person_count
                 FROM account_base ab
@@ -189,24 +207,48 @@ class DataRelationshipAnalyzer:
         
         # 1. basic relationship statistics (optimized with time range)
         query = f"""
-        SELECT 
-            COUNT(DISTINCT ab.id) as unique_accounts,
-            COUNT(DISTINCT a.id) as unique_activities,
-            COUNT(DISTINCT CASE WHEN activity_counts.activity_count > 0 THEN ab.id END) as unique_accounts_with_activities,
-            AVG(COALESCE(activity_counts.activity_count, 0)) as avg_activities_per_account,
-            MIN(COALESCE(activity_counts.activity_count, 0)) as min_activities_per_account,
-            MAX(COALESCE(activity_counts.activity_count, 0)) as max_activities_per_account,
-            STDDEV(COALESCE(activity_counts.activity_count, 0)) as std_activities_per_account
-        FROM account_base ab
-        LEFT JOIN (
-            SELECT account_id, COUNT(*) as activity_count
+        WITH RecentActivities AS (
+            SELECT
+                id,
+                account_id
             FROM activity
             WHERE activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
+        ),
+        AccountActivityCounts AS (
+            SELECT
+                account_id,
+                COUNT(*) AS activity_count
+            FROM RecentActivities
             GROUP BY account_id
-        ) activity_counts ON ab.id = activity_counts.account_id
-        LEFT JOIN activity a ON ab.id = a.account_id 
-            AND a.activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
-        """
+        ),
+        ActivityStats AS (
+            SELECT
+                AVG(activity_count) AS avg_activities_per_account,
+                MIN(activity_count) AS min_activities_per_account,
+                MAX(activity_count) AS max_activities_per_account,
+                STDDEV(activity_count) AS std_activities_per_account
+            FROM AccountActivityCounts
+        ),
+        OverallStats AS (
+            SELECT
+                (SELECT APPROX_COUNT_DISTINCT(id) FROM account_base) AS unique_accounts,
+                (SELECT APPROX_COUNT_DISTINCT(id) FROM RecentActivities) AS unique_activities,
+                APPROX_COUNT_DISTINCT(ab.id) AS unique_accounts_with_activities
+            FROM account_base ab
+            INNER JOIN AccountActivityCounts aac ON ab.id = aac.account_id
+        )
+        SELECT
+            o.unique_accounts,
+            o.unique_activities,
+            o.unique_accounts_with_activities,
+            s.avg_activities_per_account,
+            s.min_activities_per_account,
+            s.max_activities_per_account,
+            s.std_activities_per_account
+        FROM OverallStats o
+        CROSS JOIN ActivityStats s;
+        """        
+        
         result = self.execute_query(query)
         
         if result:
@@ -237,7 +279,7 @@ class DataRelationshipAnalyzer:
                     ELSE '5000+'
                 END as activity_range,
                 COUNT(*) as account_count,
-                COUNT(*) * 100.0 / (SELECT COUNT(DISTINCT id) FROM account_base) as percentage
+                COUNT(*) * 100.0 / (SELECT APPROX_COUNT_DISTINCT(id) FROM account_base) as percentage
             FROM (
                 SELECT ab.id, COALESCE(COUNT(a.id), 0) as activity_count
                 FROM account_base ab
@@ -307,9 +349,9 @@ class DataRelationshipAnalyzer:
         # 1. basic relationship statistics (optimized with time range)
         query = f"""
         SELECT 
-            COUNT(DISTINCT pn.id) as unique_persons,
-            COUNT(DISTINCT a.id) as unique_activities,
-            COUNT(DISTINCT CASE WHEN activity_counts.activity_count > 0 THEN pn.id END) as unique_persons_with_activities,
+            APPROX_COUNT_DISTINCT(pn.id) as unique_persons,
+            APPROX_COUNT_DISTINCT(a.id) as unique_activities,
+            APPROX_COUNT_DISTINCT(CASE WHEN activity_counts.activity_count > 0 THEN pn.id END) as unique_persons_with_activities,
             AVG(COALESCE(activity_counts.activity_count, 0)) as avg_activities_per_person,
             MIN(COALESCE(activity_counts.activity_count, 0)) as min_activities_per_person,
             MAX(COALESCE(activity_counts.activity_count, 0)) as max_activities_per_person,
@@ -352,7 +394,7 @@ class DataRelationshipAnalyzer:
                     ELSE '1000+'
                 END as activity_range,
                 COUNT(*) as person_count,
-                COUNT(*) * 100.0 / (SELECT COUNT(DISTINCT id) FROM person_norm) as percentage
+                COUNT(*) * 100.0 / (SELECT APPROX_COUNT_DISTINCT(id) FROM person_norm) as percentage
             FROM (
                 SELECT pn.id, COALESCE(COUNT(a.id), 0) as activity_count
                 FROM person_norm pn
@@ -397,20 +439,38 @@ class DataRelationshipAnalyzer:
         
         # 1. basic list statistics
         query = """
-        SELECT
-            COUNT(DISTINCT alm.account_list_id) as unique_lists,
-            COUNT(DISTINCT account_id) as unique_accounts,
-            COUNT(*) as total_memberships, 
-            AVG(list_sizes.member_count) as avg_members_per_list,
-            MIN(list_sizes.member_count) as min_members_per_list,
-            MAX(list_sizes.member_count) as max_members_per_list,
-            STDDEV(list_sizes.member_count) as std_members_per_list
-        FROM account_list_member alm
-        LEFT JOIN (
-            SELECT account_list_id, COUNT(*) as member_count
-            FROM account_list_member
-            GROUP BY account_list_id
-        ) list_sizes ON alm.account_list_id = list_sizes.account_list_id
+            WITH ListSizes AS (
+                SELECT
+                    account_list_id,
+                    COUNT(*) AS member_count
+                FROM account_list_member
+                GROUP BY account_list_id
+            ),
+            ListStats AS (
+                SELECT
+                    AVG(member_count) AS avg_members_per_list,
+                    MIN(member_count) AS min_members_per_list,
+                    MAX(member_count) AS max_members_per_list,
+                    STDDEV(member_count) AS std_members_per_list
+                FROM ListSizes
+            ),
+            OverallStats AS (
+                SELECT
+                    APPROX_COUNT_DISTINCT(account_list_id) AS unique_lists,
+                    APPROX_COUNT_DISTINCT(account_id) AS unique_accounts,
+                    COUNT(*) AS total_memberships
+                FROM account_list_member
+            )
+            SELECT
+                o.unique_lists,
+                o.unique_accounts,
+                o.total_memberships,
+                s.avg_members_per_list,
+                s.min_members_per_list,
+                s.max_members_per_list,
+                s.std_members_per_list
+            FROM OverallStats o
+            CROSS JOIN ListStats s;
         """
         result = self.execute_query(query)
         
@@ -439,7 +499,7 @@ class DataRelationshipAnalyzer:
                     ELSE '5000+'
                 END as size_range,
                 COUNT(*) as list_count,
-                COUNT(*) * 100.0 / (SELECT COUNT(DISTINCT account_list_id) FROM account_list_member) as percentage
+                COUNT(*) * 100.0 / (SELECT APPROX_COUNT_DISTINCT(account_list_id) FROM account_list_member) as percentage
             FROM (
                 SELECT account_list_id, COUNT(*) as member_count
                 FROM account_list_member
@@ -494,9 +554,9 @@ class DataRelationshipAnalyzer:
             # 4. analyze relationship with account_base (coverage rate)
             query = """
             SELECT 
-                COUNT(DISTINCT ab.id) as unique_accounts_in_base,
-                COUNT(DISTINCT alm.account_id) as unique_accounts_in_lists,
-                COUNT(DISTINCT alm.account_id) * 100.0 / COUNT(DISTINCT ab.id) as account_coverage_percentage
+                APPROX_COUNT_DISTINCT(ab.id) as unique_accounts_in_base,
+                APPROX_COUNT_DISTINCT(alm.account_id) as unique_accounts_in_lists,
+                APPROX_COUNT_DISTINCT(alm.account_id) * 100.0 / APPROX_COUNT_DISTINCT(ab.id) as account_coverage_percentage
             FROM account_base ab
             LEFT JOIN account_list_member alm ON ab.id = alm.account_id
             """
@@ -522,8 +582,8 @@ class DataRelationshipAnalyzer:
             YEAR(activity_date) as year,
             MONTH(activity_date) as month,
             COUNT(*) as count,
-            COUNT(DISTINCT account_id) as unique_accounts,
-            COUNT(DISTINCT person_id) as unique_persons
+            APPROX_COUNT_DISTINCT(account_id) as unique_accounts,
+            APPROX_COUNT_DISTINCT(person_id) as unique_persons
         FROM activity
         WHERE activity_date IS NOT NULL
         GROUP BY YEAR(activity_date), MONTH(activity_date)

@@ -155,7 +155,7 @@ class ProductionDataProfiler:
         SELECT 
             COUNT(*) as total_count,
             COUNT(`{column_name}`) as non_null_count,
-            COUNT(DISTINCT `{column_name}`) as unique_count,
+            APPROX_COUNT_DISTINCT(`{column_name}`) as unique_count,
             MIN(`{column_name}`) as min_value,
             MAX(`{column_name}`) as max_value,
             AVG(`{column_name}`) as avg_value,
@@ -194,18 +194,12 @@ class ProductionDataProfiler:
         """analyze string column statistics"""
         where_clause = self._build_where_clause(table_name, optimization_config)
         
-        # modify WHERE clause to include NOT NULL check
-        if where_clause:
-            where_clause = where_clause.replace("WHERE", "WHERE `{column_name}` IS NOT NULL AND")
-        else:
-            where_clause = f"WHERE `{column_name}` IS NOT NULL"
-        
         # basic statistics
         query = f"""
         SELECT 
             COUNT(*) as total_count,
             COUNT(`{column_name}`) as non_null_count,
-            COUNT(DISTINCT `{column_name}`) as unique_count,
+            APPROX_COUNT_DISTINCT(`{column_name}`) as unique_count,
             AVG(LENGTH(`{column_name}`)) as avg_length,
             MIN(LENGTH(`{column_name}`)) as min_length,
             MAX(LENGTH(`{column_name}`)) as max_length
@@ -245,7 +239,7 @@ class ProductionDataProfiler:
                 COUNT(*) as frequency,
                 COUNT(*) * 100.0 / (SELECT COUNT(*) FROM `{table_name}`) as percentage
             FROM `{table_name}`
-            WHERE `{column_name}` IS NOT NULL
+            {where_clause if where_clause else f"WHERE `{column_name}` IS NOT NULL"}
             GROUP BY `{column_name}`
             ORDER BY frequency DESC
             LIMIT 50
@@ -270,7 +264,6 @@ class ProductionDataProfiler:
         SELECT 
             COUNT(*) as total_count,
             COUNT(`{column_name}`) as non_null_count,
-            COUNT(DISTINCT `{column_name}`) as unique_count,
             MIN(`{column_name}`) as min_date,
             MAX(`{column_name}`) as max_date
         FROM `{table_name}`
@@ -285,7 +278,6 @@ class ProductionDataProfiler:
                 'non_null_count': data['non_null_count'],
                 'null_count': data['total_count'] - data['non_null_count'],
                 'null_percentage': round((data['total_count'] - data['non_null_count']) * 100.0 / data['total_count'], 2) if data['total_count'] > 0 else 0,
-                'unique_count': data['unique_count'],
                 'min_date': data['min_date'].isoformat() if data['min_date'] else None,
                 'max_date': data['max_date'].isoformat() if data['max_date'] else None
             }
@@ -295,18 +287,13 @@ class ProductionDataProfiler:
                 date_range = (data['max_date'] - data['min_date']).days
                 stats['date_range_days'] = date_range
             
-            # analyze time distribution pattern (by year and month)
-            dist_where = where_clause if where_clause else f"WHERE `{column_name}` IS NOT NULL"
-            if where_clause and 'IS NOT NULL' not in where_clause:
-                dist_where = where_clause.replace("WHERE", f"WHERE `{column_name}` IS NOT NULL AND")
-            
             dist_query = f"""
             SELECT 
                 YEAR(`{column_name}`) as year,
                 MONTH(`{column_name}`) as month,
                 COUNT(*) as count
             FROM `{table_name}`
-            {dist_where}
+            {where_clause if where_clause else f"WHERE `{column_name}` IS NOT NULL"}
             GROUP BY YEAR(`{column_name}`), MONTH(`{column_name}`)
             ORDER BY year DESC, month DESC
             LIMIT 24
@@ -406,7 +393,7 @@ class ProductionDataProfiler:
         print(f"\n" + "*"*30 + " begin to analyze table: " + table_name + " " + "*"*30)
         
         # get table row count
-        row_count = self.get_table_row_count(table_name)
+        row_count = self.get_table_row_count(table_name)  # TODO
         print(f"✓ table row count: {row_count:,}")
         
         # check if large table optimization should be applied
@@ -430,7 +417,7 @@ class ProductionDataProfiler:
         if is_large_table and 'key_columns' in optimization_config:
             # filter columns if large table
             key_columns = optimization_config['key_columns']
-            columns_to_analyze = [col for col in columns if col['column_name'] in key_columns]
+            columns_to_analyze = [col for col in columns if col['column_name'] in key_columns] # TODO
             print(f"   analyzing {len(columns_to_analyze)} key columns instead of all {len(columns)} columns")
         
         # limit columns to analyze
