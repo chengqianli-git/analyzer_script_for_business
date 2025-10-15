@@ -51,10 +51,6 @@ class ProductionDataProfiler:
         # configuration options
         self.max_columns_to_analyze = config.get('max_columns_to_analyze', 50)
         
-        # large table optimization configuration
-        self.enable_large_table_optimization = config.get('enable_large_table_optimization', True)
-        self.large_table_threshold = config.get('large_table_threshold', 100_000_000)  # 100 million rows
-        
         # large table specific optimization strategies
         self.large_table_configs = {
             'activity': {
@@ -97,9 +93,11 @@ class ProductionDataProfiler:
             print(f"SQL: {query}")
             return []
     
-    def get_table_row_count(self, table_name: str) -> int:
+    def get_table_row_count(self, table_name: str, where_clause: str = "") -> int:
         """get table row count"""
         query = f"SELECT COUNT(*) as count FROM `{table_name}`"
+        if where_clause:
+            query += f" WHERE {where_clause}"
         result = self.execute_query(query)
         return result[0]['count'] if result else 0
     
@@ -181,7 +179,7 @@ class ProductionDataProfiler:
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days'),
                     'method': 'sampling + time_range' if 'sample_rate' in optimization_config and 'time_range_days' in optimization_config else 'time_range' if 'time_range_days' in optimization_config else 'sampling'
-                } # TODO 没必要
+                }
             
             return stats
         return {}
@@ -207,7 +205,7 @@ class ProductionDataProfiler:
         stats = {}
         if result:
             data = result[0]
-            total_rows = self.get_table_row_count(table_name)
+            total_rows = self.get_table_row_count(table_name, where_clause)
             stats = {
                 'total_count': total_rows,
                 'non_null_count': data['non_null_count'],
@@ -225,7 +223,7 @@ class ProductionDataProfiler:
                 stats['optimization_applied'] = {
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days')
-                } # TODO 没必要
+                } 
         
         # if the unique value is less (probably a categorical column), get the distribution
         if stats.get('unique_count', float('inf')) < 100 and stats.get('unique_count', 0) > 0:
@@ -305,7 +303,7 @@ class ProductionDataProfiler:
                 stats['optimization_applied'] = {
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days')
-                } # TODO 没必要
+                }
             
             return stats
         return {}
@@ -339,7 +337,7 @@ class ProductionDataProfiler:
                 stats['optimization_applied'] = {
                     'sample_rate': optimization_config.get('sample_rate'),
                     'time_range_days': optimization_config.get('time_range_days')
-                } # TODO 没必要
+                } 
             
             return stats
         return {}
@@ -390,21 +388,15 @@ class ProductionDataProfiler:
         """analyze all features of a single table"""
         print(f"\n" + "*"*30 + " begin to analyze table: " + table_name + " " + "*"*30)
         
-        # get table row count
-        row_count = self.get_table_row_count(table_name)  # TODO
-        print(f"✓ table row count: {row_count:,}")
-        
         # check if large table optimization should be applied
         optimization_config = None
         is_large_table = False
         
-        if self.enable_large_table_optimization and table_name in self.large_table_configs:
-            # judge if the table is large table, if so, enable large table optimization
-            if row_count > self.large_table_threshold:
-                is_large_table = True
-                optimization_config = self.large_table_configs[table_name]
-                print(f"  large table detected (>{self.large_table_threshold:,} rows)")
-                print(f"  enabling optimization: {optimization_config.get('sample_rate', 0)*100:.1f}% sampling + {optimization_config.get('time_range_days', 'N/A')} days time range")
+        if table_name in self.large_table_configs:
+            # enable large table optimization for configured tables
+            is_large_table = True
+            optimization_config = self.large_table_configs[table_name]
+            print(f"  enabling optimization: {optimization_config.get('sample_rate', 0)*100:.1f}% sampling + {optimization_config.get('time_range_days', 'N/A')} days time range")
         
         # get table columns
         columns = self.get_table_columns(table_name)
@@ -415,7 +407,7 @@ class ProductionDataProfiler:
         if is_large_table and 'key_columns' in optimization_config:
             # filter columns if large table
             key_columns = optimization_config['key_columns']
-            columns_to_analyze = [col for col in columns if col['column_name'] in key_columns] # TODO
+            columns_to_analyze = [col for col in columns if col['column_name'] in key_columns]
             print(f"   analyzing {len(columns_to_analyze)} key columns instead of all {len(columns)} columns")
         
         # limit columns to analyze
@@ -423,7 +415,6 @@ class ProductionDataProfiler:
         
         # initialize table results
         self.results['tables'][table_name] = {
-            'row_count': row_count,
             'column_count': len(columns),
             'columns': {},
             'is_large_table': is_large_table
@@ -509,8 +500,6 @@ def main():
         # analyze options
         'max_columns_to_analyze': int(os.getenv('MAX_COLUMNS_TO_ANALYZE', '50')),
         # large table optimization options
-        'enable_large_table_optimization': os.getenv('ENABLE_LARGE_TABLE_OPTIMIZATION', 'true').lower() == 'true',  # whether enable large table optimization
-        'large_table_threshold': int(os.getenv('LARGE_TABLE_THRESHOLD', '100000000')),  # 100 million，large table threshold
         'activity_sample_rate': float(os.getenv('ACTIVITY_SAMPLE_RATE', '0.01')),  # 1%，sample rate
         'activity_time_range_days': int(os.getenv('ACTIVITY_TIME_RANGE_DAYS', '90'))  # 90 days，time range
     }
@@ -524,8 +513,6 @@ def main():
     print(f"  - host: {config['host']}:{config['port']}")
     print(f"  - max columns to analyze: {config['max_columns_to_analyze']}")
     print(f"\nlarge table optimization:")
-    print(f"  - enabled: {config['enable_large_table_optimization']}")
-    print(f"  - threshold: {config['large_table_threshold']:,} rows")
     print(f"  - activity sample rate: {config['activity_sample_rate']*100:.1f}%")
     print(f"  - activity time range: {config['activity_time_range_days']} days")
     
