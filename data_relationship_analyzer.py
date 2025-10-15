@@ -34,7 +34,6 @@ class DataRelationshipAnalyzer:
                 'database': config.get('database', 'unknown')
             },
             'relationships': {},
-            'cardinality_patterns': {},
             'data_flow_patterns': {}
         }
         
@@ -156,37 +155,49 @@ class DataRelationshipAnalyzer:
             # 3. bucket statistics
             # count the number of persons distribution, the number of accounts with the same number of persons and the percentage
             bucket_query = """
-            SELECT 
-                CASE 
-                    WHEN person_count = 0 THEN '0'
-                    WHEN person_count BETWEEN 1 AND 5 THEN '1-5'
-                    WHEN person_count BETWEEN 6 AND 10 THEN '6-10'
-                    WHEN person_count BETWEEN 11 AND 20 THEN '11-20'
-                    WHEN person_count BETWEEN 21 AND 50 THEN '21-50'
-                    WHEN person_count BETWEEN 51 AND 100 THEN '51-100'
-                    WHEN person_count BETWEEN 101 AND 500 THEN '101-500'
-                    ELSE '500+'
-                END as person_range,
-                COUNT(*) as account_count,
-                COUNT(*) * 100.0 / (SELECT APPROX_COUNT_DISTINCT(id) FROM account_base) as percentage
-            FROM (
-                SELECT ab.id, COALESCE(COUNT(pn.id), 0) as person_count
-                FROM account_base ab
-                LEFT JOIN person_norm pn ON ab.id = pn.account_id
-                GROUP BY ab.id
-            ) person_dist
-            GROUP BY person_range
-            ORDER BY 
-                CASE person_range
-                    WHEN '0' THEN 1
-                    WHEN '1-5' THEN 2
-                    WHEN '6-10' THEN 3
-                    WHEN '11-20' THEN 4
-                    WHEN '21-50' THEN 5
-                    WHEN '51-100' THEN 6
-                    WHEN '101-500' THEN 7
-                    ELSE 8
-                END
+            WITH 
+                total_accounts AS (
+                    SELECT COUNT(*) as total_cnt FROM account_base
+                ),
+                person_counts AS (
+                    SELECT 
+                        ab.id,
+                        COUNT(pn.id) as person_count
+                    FROM account_base ab
+                    LEFT JOIN person_norm pn ON ab.id = pn.account_id
+                    GROUP BY ab.id
+                ),
+                ranged_counts AS (
+                    SELECT 
+                        CASE 
+                            WHEN person_count = 0 THEN 1
+                            WHEN person_count <= 5 THEN 2
+                            WHEN person_count <= 10 THEN 3
+                            WHEN person_count <= 20 THEN 4
+                            WHEN person_count <= 50 THEN 5
+                            WHEN person_count <= 100 THEN 6
+                            WHEN person_count <= 500 THEN 7
+                            ELSE 8
+                        END as range_id,
+                        CASE 
+                            WHEN person_count = 0 THEN '0'
+                            WHEN person_count <= 5 THEN '1-5'
+                            WHEN person_count <= 10 THEN '6-10'
+                            WHEN person_count <= 20 THEN '11-20'
+                            WHEN person_count <= 50 THEN '21-50'
+                            WHEN person_count <= 100 THEN '51-100'
+                            WHEN person_count <= 500 THEN '101-500'
+                            ELSE '500+'
+                        END as person_range
+                    FROM person_counts
+                )
+                SELECT 
+                    person_range,
+                    COUNT(*) as account_count,
+                    ROUND(COUNT(*) * 100.0 / (SELECT total_cnt FROM total_accounts), 2) as percentage
+                FROM ranged_counts
+                GROUP BY range_id, person_range
+                ORDER BY range_id;
             """
             buckets = self.execute_query(bucket_query)
             relationship['person_count_buckets'] = [
@@ -267,38 +278,49 @@ class DataRelationshipAnalyzer:
             # 2. activity count distribution (bucket statistics with time range optimization)
             # count the number of activities distribution, the number of accounts with the same number of activities and the percentage
             bucket_query = f"""
-            SELECT 
-                CASE 
-                    WHEN activity_count = 0 THEN '0'
-                    WHEN activity_count BETWEEN 1 AND 10 THEN '1-10'
-                    WHEN activity_count BETWEEN 11 AND 50 THEN '11-50'
-                    WHEN activity_count BETWEEN 51 AND 100 THEN '51-100'
-                    WHEN activity_count BETWEEN 101 AND 500 THEN '101-500'
-                    WHEN activity_count BETWEEN 501 AND 1000 THEN '501-1000'
-                    WHEN activity_count BETWEEN 1001 AND 5000 THEN '1001-5000'
-                    ELSE '5000+'
-                END as activity_range,
-                COUNT(*) as account_count,
-                COUNT(*) * 100.0 / (SELECT APPROX_COUNT_DISTINCT(id) FROM account_base) as percentage
-            FROM (
-                SELECT ab.id, COALESCE(COUNT(a.id), 0) as activity_count
+            WITH total_accounts AS (
+                SELECT COUNT(*) as total_cnt FROM account_base
+            ),
+            account_activities AS (
+                SELECT 
+                    ab.id,
+                    COUNT(a.id) as activity_count
                 FROM account_base ab
                 LEFT JOIN activity a ON ab.id = a.account_id 
                     AND a.activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
                 GROUP BY ab.id
-            ) activity_dist
-            GROUP BY activity_range
-            ORDER BY 
-                CASE activity_range
-                    WHEN '0' THEN 1
-                    WHEN '1-10' THEN 2
-                    WHEN '11-50' THEN 3
-                    WHEN '51-100' THEN 4
-                    WHEN '101-500' THEN 5
-                    WHEN '501-1000' THEN 6
-                    WHEN '1001-5000' THEN 7
-                    ELSE 8
-                END
+            ),
+            activity_ranges AS (
+                SELECT 
+                    CASE 
+                        WHEN activity_count = 0 THEN 1
+                        WHEN activity_count <= 10 THEN 2
+                        WHEN activity_count <= 50 THEN 3
+                        WHEN activity_count <= 100 THEN 4
+                        WHEN activity_count <= 500 THEN 5
+                        WHEN activity_count <= 1000 THEN 6
+                        WHEN activity_count <= 5000 THEN 7
+                        ELSE 8
+                    END as range_id,
+                    CASE 
+                        WHEN activity_count = 0 THEN '0'
+                        WHEN activity_count <= 10 THEN '1-10'
+                        WHEN activity_count <= 50 THEN '11-50'
+                        WHEN activity_count <= 100 THEN '51-100'
+                        WHEN activity_count <= 500 THEN '101-500'
+                        WHEN activity_count <= 1000 THEN '501-1000'
+                        WHEN activity_count <= 5000 THEN '1001-5000'
+                        ELSE '5000+'
+                    END as activity_range
+                FROM account_activities
+            )
+            SELECT 
+                activity_range,
+                COUNT(*) as account_count,
+                ROUND(COUNT(*) * 100.0 / (SELECT total_cnt FROM total_accounts), 2) as percentage
+            FROM activity_ranges
+            GROUP BY range_id, activity_range
+            ORDER BY range_id;
             """
             buckets = self.execute_query(bucket_query)
             relationship['activity_count_buckets'] = [
@@ -312,16 +334,23 @@ class DataRelationshipAnalyzer:
             
             # 3. activity type distribution (with time range optimization)
             type_query = f"""
-            SELECT 
+            SELECT
                 activityType,
-                COUNT(*) as count,
-                COUNT(*) * 100.0 / (SELECT COUNT(*) FROM activity WHERE activityType IS NOT NULL AND activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)) as percentage
-            FROM activity
-            WHERE activityType IS NOT NULL
+                activity_count AS count,
+                -- use window function to calculate total and percentage
+                (activity_count * 100.0 / SUM(activity_count) OVER ()) AS percentage
+            FROM (
+                -- 1. filter data and calculate the number of each activityType
+                SELECT
+                    activityType,
+                    COUNT(*) as activity_count
+                FROM activity
+                WHERE activityType IS NOT NULL
                 AND activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
-            GROUP BY activityType
+                GROUP BY activityType
+            ) AS grouped_data
             ORDER BY count DESC
-            LIMIT 20
+            LIMIT 20;
             """
             activity_types = self.execute_query(type_query)
             relationship['activity_type_distribution'] = [
@@ -348,21 +377,24 @@ class DataRelationshipAnalyzer:
         
         # 1. basic relationship statistics (optimized with time range)
         query = f"""
+        WITH activity_counts AS (
+            SELECT 
+                person_id, 
+                COUNT(*) as activity_count
+            FROM activity 
+            WHERE activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
+            GROUP BY person_id
+        )
         SELECT 
             APPROX_COUNT_DISTINCT(pn.id) as unique_persons,
             APPROX_COUNT_DISTINCT(a.id) as unique_activities,
-            APPROX_COUNT_DISTINCT(CASE WHEN activity_counts.activity_count > 0 THEN pn.id END) as unique_persons_with_activities,
-            AVG(COALESCE(activity_counts.activity_count, 0)) as avg_activities_per_person,
-            MIN(COALESCE(activity_counts.activity_count, 0)) as min_activities_per_person,
-            MAX(COALESCE(activity_counts.activity_count, 0)) as max_activities_per_person,
-            STDDEV(COALESCE(activity_counts.activity_count, 0)) as std_activities_per_person
+            APPROX_COUNT_DISTINCT(CASE WHEN ac.activity_count > 0 THEN pn.id END) as unique_persons_with_activities,
+            AVG(COALESCE(ac.activity_count, 0)) as avg_activities_per_person,
+            MIN(COALESCE(ac.activity_count, 0)) as min_activities_per_person,
+            MAX(COALESCE(ac.activity_count, 0)) as max_activities_per_person,
+            STDDEV(COALESCE(ac.activity_count, 0)) as std_activities_per_person
         FROM person_norm pn
-        LEFT JOIN (
-            SELECT person_id, COUNT(*) as activity_count
-            FROM activity
-            WHERE activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
-            GROUP BY person_id
-        ) activity_counts ON pn.id = activity_counts.person_id
+        LEFT JOIN activity_counts ac ON pn.id = ac.person_id
         LEFT JOIN activity a ON pn.id = a.person_id 
             AND a.activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
         """
@@ -551,24 +583,6 @@ class DataRelationshipAnalyzer:
             self.results['relationships']['account_list_member'] = pattern
             print(f"  ✓ found {pattern['unique_lists']} lists, {pattern['unique_accounts']} accounts")
 
-            # 4. analyze relationship with account_base (coverage rate)
-            query = """
-            SELECT 
-                APPROX_COUNT_DISTINCT(ab.id) as unique_accounts_in_base,
-                APPROX_COUNT_DISTINCT(alm.account_id) as unique_accounts_in_lists,
-                APPROX_COUNT_DISTINCT(alm.account_id) * 100.0 / APPROX_COUNT_DISTINCT(ab.id) as account_coverage_percentage
-            FROM account_base ab
-            LEFT JOIN account_list_member alm ON ab.id = alm.account_id
-            """
-            result = self.execute_query(query)
-            if result:
-                data = result[0]
-                self.results['relationships']['account_list_member']['account_base_coverage'] = {
-                    'unique_accounts_in_base': data['unique_accounts_in_base'],
-                    'accounts_in_lists': data['unique_accounts_in_lists'],
-                    'accounts_not_in_lists': data['unique_accounts_in_base'] - data['unique_accounts_in_lists'],
-                    'coverage_percentage': round(float(data['account_coverage_percentage']), 2) if data['account_coverage_percentage'] else 0
-                }
     
     def analyze_temporal_patterns(self):
         """analyze temporal patterns"""
@@ -577,7 +591,7 @@ class DataRelationshipAnalyzer:
         temporal = {}
         
         # 1. activity temporal patterns
-        activity_temporal_query = """
+        activity_temporal_query = f"""
         SELECT 
             YEAR(activity_date) as year,
             MONTH(activity_date) as month,
@@ -585,7 +599,7 @@ class DataRelationshipAnalyzer:
             APPROX_COUNT_DISTINCT(account_id) as unique_accounts,
             APPROX_COUNT_DISTINCT(person_id) as unique_persons
         FROM activity
-        WHERE activity_date IS NOT NULL
+        WHERE activity_date IS NOT NULL AND activity_date >= DATE_SUB(NOW(), INTERVAL {self.activity_time_range_days} DAY)
         GROUP BY YEAR(activity_date), MONTH(activity_date)
         ORDER BY year DESC, month DESC
         LIMIT 24

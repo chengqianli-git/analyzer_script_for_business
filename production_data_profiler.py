@@ -60,11 +60,7 @@ class ProductionDataProfiler:
             'activity': {
                 'sample_rate': config.get('activity_sample_rate', 0.01),  # 1% sampling
                 'time_range_days': config.get('activity_time_range_days', 90),  # last 90 days
-                'time_column': 'activity_date',
-                'key_columns': [
-                    'id', 'tenant_id', 'account_id', 'person_id', 
-                    'activity_date', 'activityType', 'engagement'
-                ]
+                'time_column': 'activity_date'
             }
         }
     
